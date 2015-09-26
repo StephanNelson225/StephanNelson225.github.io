@@ -1,0 +1,396 @@
+---
+title: "QualitativeActivityRecognitionProject"
+author: "Steve Nelson"
+date: "September 25, 2015"
+output: html_document
+---
+
+
+
+```{r, echo=FALSE, results='hide'}
+startTime<-Sys.time()
+startTime
+```
+
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, results='hide'}
+library(doParallel)
+detectCores()
+cl<-makeCluster(6)
+registerDoParallel(cl)
+getDoParWorkers()
+#source - https://cran.r-project.org/web/packages/doParallel/vignettes/gettingstartedParallel.pdf
+```
+## Qualitative Activity Recognition
+
+
+#### Synopsis
+The goal of the project is to predict which of five techniques a participant applies when performing a bicep curl. One technique of performance is correct while the other four techniques were incorrect. 
+
+There are four important elements in using data to adequately predict such an outcome.  The first is understanding and **exploring the data**, how it was derived and what it says and doesn't or can't say.  The next is the **preprocessing the data** based on our understanding of the data. These are very important, and in the case of this dataset more important than the **algorithm** constructed to do the prediction.  Finally, that **prediction** needs to be understood in the context of interpretability, accuracy and error.
+
+The data exploration and subsequent preprocess of the data have been very important.  Holes were discovered in the data and were filled through preprocessing. Whole sections of data that were zeroed out were imputed.  All of the data was centered and scaled. 
+
+The alogithm used in this analysis was the "Random Forest" method in the caret package.  The data was cross-validated via 10 fold cross-validation run five times.  
+
+The resulting prediction was over 99.34 percent accurate on training data and 99.25 percent accurate on the test data.  The testing data was surprisingly close to having less error than the training data.  Subtracting there errors from 100 percent, the measure of the in-sample error is 0.66 percent while the out of sample error is just 0.75 percent. 
+ 
+When using the prediction algorithm developed here, the 20 test cases were all predicted correctly. 
+
+Thanks are expressed to the developer of this data.  Source: "Qualitative Activity Recognition of Weight Lifting Exercises", Eduardo Velloso, Lancaster University,Lancaster, UK; Andreas Bulling,  Max Planck Institute for Informatics Saarbrücken, Germany, Hans Gellersen, Lancaster University,Lancaster, UK,  Wallace Ugulino, Pontifical Catholic University of Rio de Janeiro Rio de Janeiro, Brazil, Hugo Fuks,Pontifical Catholic University of Rio de Janeiro, Rio de Janeiro, Brazil.
+
+## Purpose of Research
+The purpose of this project is to predict which flaws test subjects have in their technique for bicep curls.  The researchers have defined a class of motions that result in properly executed curls and have also identified sets of motions where curls are executed improperly.  The "classe" variable in the data set identifies what you might call the quality of the performance.  A curl can be preformed:
+
+classe "A"  Correctly 
+
+classe "B"  Incorrectly: throwing elbows to the front  
+
+classe "C"  Incorrectly: lifting the dumbbell only halfway
+
+classe "D"  Incorrectly: lowering the dumbbell only halfway 
+
+classe "E"  Incorrectly: throwing the hips to the front    
+
+Participants were supervised by an experienced weightlifter
+to make sure the execution complied to the techniques they
+were supposed to simulate. The exercises were performed by
+six male participants aged between 20-28 years, with little
+weight lifting experience. 
+
+### Detection of Mistakes in Exercises
+
+The goal of experiment was to assess whether mistakes could be detected in weight-lifting exercises by using activity
+recognition techniques. Six users were measured with wearable sensors performing the same bicep curls activity correctly and with the set of four common mistakes.  Participants were asked to perform one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl with the five different techniques.
+
+Four 9-degree of freedom Razor inertial measurement units (IMUs) were used.  These sensors were mounted in the user's glove, armband, lumbar belt and dumbbell. Data collected from these sensors were raw accelerometer, gyroscope and
+magnetometer readings and calculated features on the Euler angles (roll, pitch and yaw), as well. "[Euler Angles,https://en.wikipedia.org/wiki/Euler_angles]" 
+
+
+## Data Exploration
+
+The data frame was 19,622 rows by 160 columns.  In general, the rows refered to the sensor observations at a specific point in time as measured in tiny fractions of a second within an observation window. The time measures were grouped into 858 windows.  The variables related to the windows, date, time and timestamp are not necessary for the model building as the model will not focus on predicting a window but on an individual moment of time.
+
+Reviewing the observations for each combination of subject and classe, we find that Adelmo and Jeremy were the most prolific subjects while Pedro was the least.  Classe "A", representing correct lifting was the most common of the classes while classe "D" representing partial lowering of the dumbell was represented the least. Note that the user_name variable will not be used in the analysis but will be used in understanding the data and in the pre-processing steps.  The classe variable is what we are predicting so that will be included.
+
+```{r, echo=FALSE}
+#code:
+bicep<-read.csv("bicep.csv", stringsAsFactors=FALSE, header=TRUE)
+#length(unique(bicep$num_win))
+a<-table(bicep$classe, bicep$user_name)
+addmargins(a)
+#a
+```
+
+#### Which Variables to Keep as Predictors
+
+There were thirty-eight measures for each of the four sensors, arm, belt, forearm and dumbbell.  Thirteen measures for each of the four sensors appear to be raw moment-to-moment data while twenty-five measures are summary measures for each of these data variables.  These summary values are only calculated once over the length of the observation window.  Consequently, there were many missing values or na's in these columns.  Since they are not raw data, these 100 measures will not be included in the evaluation data set. 
+
+To summarise, the variables that will be kept include the thirteen raw measures for each of the four sensors and the classe variable, for a total of 53 variables. Their names are shown below.
+
+```{r, echo=FALSE}
+fewer<- as.vector(c(8:11, 37:49, 60:68,84:86,102,113:124,140,151:160))# subset to relevant variables
+bicep_mod<-bicep[,fewer]
+bicep_mod$classe<-as.factor(bicep_mod$classe)
+names(bicep_mod)
+```
+
+
+
+
+##Data Preprocessing
+
+The first step in preprocessing was to eliminate the variables that weren't of value to the modeling, the seven identifier variables at the start of the data set and the 100 other unnecessary variables.  This was done by simple subsetting.
+
+Next, there was evidence of systematic flaws in the raw data.  This is evident in the heatmap below. In particular, values for Jeremy and Adelmo in several variables suggest sensor failure or transcription error.  
+
+These zero values are modified with the "sample function" which calculates the mean and standard deviation of the non-missing values and applies them to the values that are zero.  
+
+Finally, the preProcess function in caret is used to center and scale all of the variables.
+
+
+###Heatmap Highlighting Zero Values in Gold
+Many zero values in variables show no distinct pattern but there is a definite pattern to several variables.
+```{r, fig.height=6, fig.width=12, message=FALSE, echo=FALSE, cache=TRUE}
+library(cutoffR)
+bicep<-read.csv("bicep.csv", stringsAsFactors=FALSE, header=TRUE)
+fewerZ<- as.vector(c(2, 7, 8:11, 37:49, 60:68,84:86,102,113:124,140,151:160))#need to remove 2 and 7 for subsequent analysis.
+p_bicep<-bicep[,fewerZ]
+aa<-as.vector(names(p_bicep))
+p_bicep[p_bicep==0]<-NA # makes them missing values
+aa<-as.vector(aa) 
+#function to assemble missing value data
+
+sqr = seq(1:55)
+count = NULL
+for (i in 1:55)
+{
+count[i] =nmissing(p_bicep[,i])
+}
+
+MissingValue<-as.data.frame(count)
+row.names(MissingValue)<-aa
+names(MissingValue)="Count of Zero Values"
+
+miss<-p_bicep [order(p_bicep$user_name, p_bicep$classe),] #order the observations to visually align the zero values
+
+h<-HeatStruct(miss[,2:54], high.col = "steelblue", low.col = "white",
+missing.col = "gold", xlab = "", ylab = "")
+plot(h, main="Heatmap of Highlighting Zero Values")
+
+```
+
+
+As can be seen from the table below, roll_forearm, pitch_forearm, and yaw_forearm have large number of zero values as do roll_arm, pitch_arm and yaw_arm.  The heatmap above shows a consistent string of zero values. On the heatmap, these six are shown as the longer strings of gold.  The location differences on the heatmap reflect different users, creating a plaid-like visual effect.  The less consistent strings of gold zero values are evident in three user levels locations and reflect the higher number of zeros from gyros-belt x, y and z. Other zero values seem more or less random.
+
+```{r,echo=FALSE}
+
+library(cutoffR)
+
+bicep<-read.csv("bicep.csv", stringsAsFactors=FALSE, header=TRUE)
+fewerZ<- as.vector(c(2, 7, 8:11, 37:49, 60:68,84:86,102,113:124,140,151:160))
+p_bicep<-bicep[,fewerZ]
+p_bicep[p_bicep==0]<-NA 
+aa<-as.vector(names(p_bicep))
+
+
+#Below is a series of functions to count zero values.  Zero was set to na and then the na's were counted.  Apologies for not writing a function to do it in one step. 
+countadelmo = NULL
+for (i in 1:55)
+{
+countadelmo[i] =nmissing(p_bicep[,i][p_bicep$user_name=="adelmo"])
+}
+ZeroValueadel<-as.data.frame(countadelmo)
+row.names(ZeroValueadel)<-aa
+names(ZeroValueadel)="Adelmo"
+
+countCarl = NULL
+for (i in 1:55)
+{
+countCarl[i] =nmissing(p_bicep[,i][p_bicep$user_name=="carlitos"])
+}
+ZeroValueCarl<-as.data.frame(countCarl)
+row.names(ZeroValueCarl)<-aa
+names(ZeroValueCarl)="carlitos"
+
+countCharl = NULL
+for (i in 1:55)
+{
+countCharl[i] =nmissing(p_bicep[,i][p_bicep$user_name=="charles"])
+}
+ZeroValueCharl<-as.data.frame(countCharl)
+row.names(ZeroValueCharl)<-aa
+names(ZeroValueCharl)="charles"
+
+counteur = NULL
+for (i in 1:55)
+{
+counteur[i] =nmissing(p_bicep[,i][p_bicep$user_name=="eurico"])
+}
+ZeroValueEur<-as.data.frame(counteur)
+row.names(ZeroValueEur)<-aa
+names(ZeroValueEur)="Eurico"
+
+countjer = NULL
+for (i in 1:55)
+{
+countjer[i] =nmissing(p_bicep[,i][p_bicep$user_name=="jeremy"])
+}
+ZeroValuejer<-as.data.frame(countjer)
+row.names(ZeroValuejer)<-aa
+names(ZeroValuejer)="Jeremy"
+
+countped = NULL
+for (i in 1:55)
+{
+countped[i] =nmissing(p_bicep[,i][p_bicep$user_name=="pedro"])
+}
+ZeroValueped<-as.data.frame(countped)
+row.names(ZeroValueped)<-aa
+names(ZeroValueped)="Pedro"
+
+zeros<-cbind(countped, countjer,counteur, countCharl, countCarl,countadelmo)
+row.names(zeros)<-aa
+
+colnames(zeros)<- c("pedro","jeremy","eurico","charles","carlitos","adelmo") 
+
+
+zeros # this provides a dataframe of zero values
+```
+
+
+
+```{r, echo=FALSE, results='hide'}
+bicep<-read.csv("bicep.csv", stringsAsFactors=FALSE, header=TRUE)
+
+
+ja_bicep<-bicep[bicep$user_name=="jeremy" | bicep$user_name=="adelmo",]
+
+
+zerogroup<- as.vector(c(46:48,122:124))
+zerogroup
+
+feature<-bicep[,zerogroup] # isolates the subject variables but doesn't select out jeremy or adelmo 
+dim(feature)
+summary(feature)
+#sources
+#http://topepo.github.io/caret/preprocess.html
+#http://www.r-bloggers.com/data-imputation-i/
+#http://stackoverflow.com/questions/11971876/how-to-fill-na-with-median
+#http://thomasleeper.com/Rcourse/Tutorials/NAhandling.html
+#http://adv-r.had.co.nz/Functional-programming.html#
+```
+
+
+
+```{r, echo=FALSE, results='hide'}
+#setting zeros to NA
+summary(feature) # distribution prior to NAs
+feature$roll_arm[which(feature$roll_arm==0)] <-NA
+feature$pitch_arm[which(feature$pitch_arm==0)] <-NA
+feature$yaw_arm[which(feature$yaw_arm==0)] <-NA
+feature$roll_forearm[which(feature$roll_forearm==0)] <-NA
+feature$pitch_forearm[which(feature$pitch_forearm==0)] <-NA
+feature$yaw_forearm[which(feature$yaw_forearm==0)] <-NA
+dim(feature)
+summary(feature) # distribution after NAs
+
+```
+
+
+
+
+
+
+```{r, echo=FALSE, results='hide'}
+#imputation strategy - random imputation- function
+#source-http://thomasleeper.com/Rcourse/Tutorials/NAhandling.html
+set.seed(1222)
+feature$roll_arm[is.na(feature$roll_arm)]<-sample(feature$roll_arm[!is.na(feature$roll_arm)], sum(is.na(feature$roll_arm)),TRUE)
+feature$pitch_arm[is.na(feature$pitch_arm)]<-sample(feature$pitch_arm[!is.na(feature$pitch_arm)], sum(is.na(feature$pitch_arm)),TRUE)
+feature$yaw_arm[is.na(feature$yaw_arm)]<-sample(feature$yaw_arm[!is.na(feature$yaw_arm)], sum(is.na(feature$yaw_arm)),TRUE)
+feature$roll_forearm[is.na(feature$roll_forearm)]<-sample(feature$roll_forearm[!is.na(feature$roll_forearm)], sum(is.na(feature$roll_forearm)),TRUE)
+feature$pitch_forearm[is.na(feature$pitch_forearm)]<-sample(feature$pitch_forearm[!is.na(feature$pitch_forearm)], sum(is.na(feature$pitch_forearm)),TRUE)
+feature$yaw_forearm[is.na(feature$yaw_forearm)]<-sample(feature$yaw_forearm[!is.na(feature$yaw_forearm)], sum(is.na(feature$yaw_forearm)),TRUE)
+summary(feature)
+```
+
+
+```{r, echo=FALSE, results='hide'}
+summary(bicep)[,c(46:48,122:124)] # distribution prior to NAs
+#replaces actual data with imputted data
+
+bicep$roll_arm<-feature$roll_arm
+bicep$pitch_arm<-feature$pitch_arm
+bicep$yaw_arm<-feature$yaw_arm
+bicep$roll_forearm<-feature$roll_forearm
+bicep$pitch_forearm<-feature$pitch_forearm
+bicep$yaw_forearm <-feature$yaw_forearm
+
+summary(bicep)[,c(46:48,122:124)]
+
+```
+
+
+
+
+```{r, eval=FALSE, echo=FALSE,message=FALSE,warning=FALSE}
+fewer<- as.vector(c(8:11, 37:49, 60:68,84:86,102,113:124,140,151:160))# subset to relevant variables
+bicep_mod<-bicep[,fewer]
+bicep_mod$classe<-as.factor(bicep_mod$classe)
+
+```
+
+
+
+```{r, "training and test set", echo=FALSE, warning=FALSE, message=FALSE}
+library(caret)
+set.seed(1666)
+
+inTrain = createDataPartition(bicep_mod$classe, p =0.75, list=FALSE)
+training = bicep_mod[ inTrain,]
+testing = bicep_mod[-inTrain,]
+#source for ideas-http://rstudio-pubs-static.s3.amazonaws.com/20380_01d51a675de747c0a60ab5967cdedade.html
+
+```
+
+## Modeling Algorithm:
+
+The modeling is done with the "rf" method in the train function of caret.  Rpart was tried but with not enough accuracy.  TrainControl was set a method="repeatedcv" with ten folds and 5 repeats.  Having five repeats provided a better picture of error.  Ten folds allowed some bump in accuracy.
+```{r "modFit", cache=TRUE, message=FALSE, warning=FALSE}
+modFit<- train(classe ~ .,method="rf", preProcess=c("center", "scale"),trControl=trainControl(method = "repeatedcv", number = 10, repeats=5), data=training, importance=TRUE)
+varImp(modFit)
+#print(modFit)
+modFit$finalModel
+rsamp<-modFit$resample
+reslt<-modFit$results
+
+#sources http://topepo.github.io/caret/training.html caret primer
+
+```
+Here is the accuracy and the in-sample error rate estimate.
+```{r}
+mean(rsamp$Accuracy)
+1-mean(rsamp$Accuracy)
+#sd(rsamp$Accuracy)
+#rsamp[order(rsamp$Resample)]
+```
+
+
+## Results
+ The results show that we can predict the technique of a subject doing a bicep curl with high accuracy.  It remains to be seen whether the model can be scaled up beyond these six subjects. however.
+```{r, prediction, echo=FALSE,message=FALSE,warning=FALSE}
+pred<-predict(modFit, newdata=testing)
+cm<-confusionMatrix(pred, testing$classe)
+print(cm)
+```
+This is the prediction accuracy of the testing sets against the model results.  `r cm$overall[1]`.  The out-of-sample error is one minus this number or `r 1-cm$overall[1]`.
+
+```{r, "prediction vs test group", echo=FALSE}
+testgroup<-read.csv("testgroup.cvs", stringsAsFactors=FALSE, header=TRUE)
+
+testgroup<-testgroup[,fewer]
+
+#sources http://nthturn.com/2015/02/22/prediction-using-random-forests-in-r-an-example/
+predictions<-predict(modFit, newdata=testgroup)
+
+predict(modFit, newdata=testgroup)
+
+```
+The results of the model against the test set are 20 out of twenty.
+
+
+
+```{r, eval=FALSE, echo=FALSE}
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(predictions[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+
+
+```
+
+
+```{r, echo=FALSE, results='hide'}
+sessionInfo()
+
+```
+
+```{r, echo=FALSE, results='hide'}
+endTime<-Sys.time()
+
+endTime
+endTime-startTime
+
+```
+
+
+```{r, echo=FALSE}
+stopCluster(cl)
+#https://cran.r-project.org/web/packages/doParallel/vignettes/gettingstartedParallel.pdf
+```
+
